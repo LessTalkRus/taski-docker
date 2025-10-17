@@ -8,7 +8,6 @@ on:
 
 jobs:
   tests:
-    # Разворачиваем окружение:
     runs-on: ubuntu-latest
     services:
       postgres:
@@ -19,74 +18,62 @@ jobs:
           POSTGRES_DB: django_db
         ports:
           - 5432:5432
-        options: --health-cmd pg_isready --health-interval 10s --health-timeout 5s --health-retries 5
+        options: >-
+          --health-cmd="pg_isready -U django_user -d django_db"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=5
+
+    # 🔴 ВАЖНО: даём Django все параметры подключения
+    env:
+      DB_NAME: django_db
+      POSTGRES_USER: django_user
+      POSTGRES_PASSWORD: django_password
+      DB_HOST: 127.0.0.1   # заставляем идти по TCP, а не по unix-сокету
+      DB_PORT: "5432"
+      PYTHONUNBUFFERED: "1"
+
     steps:
-      # Копируем код проекта
       - name: Check out code
         uses: actions/checkout@v3
-      # Устанавливаем Python с помощью action
+
       - name: Set up Python
         uses: actions/setup-python@v4
-      # В action setup-python@v4 передаём параметр — версию Python
         with:
-          python-version: 3.12
-      # Обновляем pip, устанавливаем flake8 и flake8-isort, 
-      # устанавливаем зависимости проекта
+          python-version: "3.12"
+
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip setuptools
           pip install flake8==6.0.0 flake8-isort==6.0.0
           pip install -r ./backend/requirements.txt
-      # Запускаем flake8 and django tests
-      - name: Test with flake8
-        # Вызываем flake8 и указываем ему,
-        # что нужно проверить файлы только в папке backend/
+
+      - name: Test with flake8 and run Django tests
         run: |
           python -m flake8 backend/
           cd backend/
           python manage.py test
+
   build_and_push_to_docker_hub:
     name: Push Docker image to DockerHub
     runs-on: ubuntu-latest
-    services:
-      postgres:
-        image: postgres:13.10
-        env:
-          POSTGRES_USER: django_user
-          POSTGRES_PASSWORD: django_password
-          POSTGRES_DB: django_db
-        ports:
-          - 5432:5432
-        options: --health-cmd pg_isready --health-interval 10s --health-timeout 5s --health-retries 5
     needs: tests
     steps:
       - name: Check out the repo
-        # Получение исходного кода из репозитория
         uses: actions/checkout@v3
+
       - name: Set up Docker Buildx
-        # Установка сборщика контейнеров Docker
         uses: docker/setup-buildx-action@v2
-      - name: Login to Docker 
-        # Авторизация на Docker Hub
+
+      - name: Login to Docker
         uses: docker/login-action@v2
-        # При помощи with передаём в action параметры username и password
         with:
-          username: ${{ secrets.DOCKER_USERNAME }} 
+          username: ${{ secrets.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_PASSWORD }}
-          # Хорошо ли держать логин и пароль прямо в коде workflow?
-          # Нет, это нехорошо
+
       - name: Push to DockerHub
-        # Одновременный билд и пуш образа в Docker Hub
         uses: docker/build-push-action@v4
         with:
-          # Параметр context: ./backend/ указывает, что нужный Dockerfile 
-          # находится в ./backend/
           context: ./backend/
-          # Параметр push: true указывает, что образ нужно не только собрать,
-          # но и отправить на Docker Hub
           push: true
-          # В параметре tags задаётся название и тег для образа.
-          # Для каждого пересобранного образа 
-          # устанавливаем тег latest, чтобы потом
-          # на сервере и в docker-compose.yml не указывать версию
           tags: lesstalkrus/taski_backend:latest
